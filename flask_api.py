@@ -13,10 +13,11 @@ from langchain.schema import HumanMessage, SystemMessage
 import io
 from email.mime.base import MIMEBase
 from email import encoders
-from models import EmailRecord, get_db, create_tables
+from models import EmailRecord, get_db, create_tables, get_current_time_ist
 from sqlalchemy.orm import Session
 from datetime import datetime
 import json
+import pytz
 
 print("Starting Flask API server initialization...")
 
@@ -194,10 +195,38 @@ def send_email(to_email, contact_person, generated_message, sender_email, sender
         
         # Save successful email record to database
         db = next(get_db())
+        # Map CSV columns to database fields
+        mobile_value = None
+        profile_value = None
+        
+        # Try different possible column names for mobile
+        for mobile_col in ["Mobile", "Mobile Number", "mobile", "Contact No", "Phone"]:
+            if mobile_col in row:
+                mobile_value = row[mobile_col]
+                break
+                
+        # Try different possible column names for profile
+        for profile_col in ["Profile", "Company Profile", "profile", "Description", "About"]:
+            if profile_col in row:
+                profile_value = row[profile_col]
+                break
+                
+        print("DEBUG: Creating email record with data:", {
+            'recipient_email': to_email,
+            'company_name': company_name,
+            'contact_person': contact_person,
+            'mobile_number': mobile_value,
+            'profile': profile_value,
+            'sector': sector_name,
+            'state': row.get("State", None)
+        })
+        
         email_record = EmailRecord(
             recipient_email=to_email,
             company_name=company_name,
             contact_person=contact_person,
+            mobile_number=mobile_value,
+            profile=profile_value,
             sector=sector_name,
             state=row.get("State", None),
             success=True,
@@ -221,6 +250,8 @@ def send_email(to_email, contact_person, generated_message, sender_email, sender
                 recipient_email=to_email,
                 company_name=company_name,
                 contact_person=contact_person,
+                mobile_number=mobile_value,
+                profile=profile_value,
                 sector=sector_name,
                 state=row.get("State", None),
                 success=False,
@@ -263,12 +294,23 @@ def send_emails():
         if 'file' in request.files and request.files['file'].filename:
             file = request.files['file']
             print(f"Reading uploaded CSV file: {file.filename}")
-            df = pd.read_csv(file).dropna(subset=["Email"])
-            print(f"CSV file loaded with {len(df)} rows")
+            df = pd.read_csv(file)
+            print("DEBUG: CSV columns found:", df.columns.tolist())
+            print("DEBUG: Column dtypes:", df.dtypes.to_dict())
+            print("DEBUG: First row data:", df.iloc[0].to_dict())
+            print("DEBUG: Sample of mobile and profile data:")
+            for idx, row in df.head().iterrows():
+                print(f"Row {idx}:")
+                print(f"  Mobile: {row.get('Mobile', 'Not found')} (type: {type(row.get('Mobile', None))})")
+                print(f"  Profile: {row.get('Profile', 'Not found')} (type: {type(row.get('Profile', None))})")
+            df = df.dropna(subset=["Email"])
+            print(f"CSV file loaded with {len(df)} rows after dropna")
         else:
             print("Using default CSV file...")
             df = pd.read_csv("companies_data.csv").dropna(subset=["Email", "Profile", "Sector", "State"])
             print(f"Default CSV file loaded with {len(df)} rows")
+            print("CSV columns:", df.columns.tolist())  # Debug: Print column names
+            print("First row of data:", df.iloc[0].to_dict())  # Debug: Print first row
         
         # Check for attachment
         attachment = request.files.get('attachment')
@@ -319,6 +361,30 @@ def send_emails():
         traceback.print_exc()
         return jsonify({"detail": error_msg}), 500
 
+# Helper function to format datetime in IST
+def format_ist_time(dt):
+    if dt is None:
+        return None
+    
+    try:
+        # Create timezone objects
+        utc_tz = pytz.UTC
+        ist_tz = pytz.timezone('Asia/Kolkata')
+        
+        # If datetime is naive, assume it's already in IST
+        # (since we store it as naive IST in the database)
+        if dt.tzinfo is None:
+            dt = ist_tz.localize(dt)
+        else:
+            # If it has timezone info, convert to IST
+            dt = dt.astimezone(ist_tz)
+        
+        # Format in desired format
+        return dt.strftime("%m/%d/%Y, %I:%M:%S %p")
+    except Exception as e:
+        print(f"Error formatting time: {e}")
+        return str(dt)
+
 @app.route('/api/email-records', methods=['GET'])
 def get_email_records():
     print("Received request for email records")
@@ -339,16 +405,19 @@ def get_email_records():
         if not start_date and not end_date:
             print("No date range provided, fetching all records")
         else:
-            # Convert dates to datetime objects
+            # Convert dates to IST datetime objects
+            ist = pytz.timezone('Asia/Kolkata')
             if start_date:
                 start_date = datetime.fromisoformat(start_date)
+                start_date = ist.localize(start_date)
             else:
-                start_date = datetime.min
+                start_date = ist.localize(datetime.min)
                 
             if end_date:
                 end_date = datetime.fromisoformat(end_date)
+                end_date = ist.localize(end_date)
             else:
-                end_date = datetime.max
+                end_date = ist.localize(datetime.max)
                 
             query = query.filter(EmailRecord.sent_at >= start_date, EmailRecord.sent_at <= end_date)
 
@@ -368,9 +437,11 @@ def get_email_records():
                 'recipient_email': record.recipient_email,
                 'company_name': record.company_name,
                 'contact_person': record.contact_person,
+                'mobile_number': record.mobile_number,
+                'profile': record.profile,
                 'sector': record.sector,
                 'state': record.state,
-                'sent_at': record.sent_at.isoformat(),
+                'sent_at': format_ist_time(record.sent_at),
                 'success': record.success,
                 'error_message': record.error_message,
                 'attachment_name': record.attachment_name
@@ -378,7 +449,7 @@ def get_email_records():
             for record in records
         ]
 
-        print("Returning email records:", result)
+        print("DEBUG: Returning email records:", result)
         return jsonify(result)
     except Exception as e:
         print(f"Error getting email records: {e}")
@@ -392,31 +463,48 @@ def create_email_record():
     db: Session = next(get_db())
     try:
         data = request.json
+        print("DEBUG: Received data for record creation:", data)
+        
+        # Create record with current IST time
+        current_time = get_current_time_ist()
+        print(f"DEBUG: Current UTC time: {datetime.utcnow()}")
+        print(f"DEBUG: Current server time: {datetime.now()}")
+        print(f"DEBUG: Generated IST time: {current_time}")
+        print(f"DEBUG: Formatted IST time: {format_ist_time(current_time)}")
+        
         record = EmailRecord(
             recipient_email=data['recipient_email'],
             company_name=data.get('company_name'),
             contact_person=data.get('contact_person'),
+            mobile_number=data.get('mobile_number'),
+            profile=data.get('profile'),
             sector=data.get('sector'),
             state=data.get('state'),
             success=data.get('success', True),
             error_message=data.get('error_message'),
-            attachment_name=data.get('attachment_name')
+            attachment_name=data.get('attachment_name'),
+            sent_at=current_time
         )
+        
         db.add(record)
         db.commit()
         db.refresh(record)
-        return jsonify({
+        
+        result = {
             'id': record.id,
             'recipient_email': record.recipient_email,
             'company_name': record.company_name,
             'contact_person': record.contact_person,
+            'mobile_number': record.mobile_number,
+            'profile': record.profile,
             'sector': record.sector,
             'state': record.state,
-            'sent_at': record.sent_at.isoformat(),
+            'sent_at': format_ist_time(record.sent_at),
             'success': record.success,
             'error_message': record.error_message,
             'attachment_name': record.attachment_name
-        }), 201
+        }
+        return jsonify(result), 201
     except Exception as e:
         db.rollback()
         return jsonify({'error': str(e)}), 500

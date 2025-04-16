@@ -44,6 +44,8 @@ interface EmailRecord {
   company_name: string;
   contact_person: string;
   recipient_email: string;
+  mobile_number: string | null;
+  profile: string | null;
   sector: string;
   state: string;
   success: boolean;
@@ -232,6 +234,8 @@ const EmailTracking: React.FC = () => {
       'Company',
       'Contact',
       'Email',
+      'Mobile',
+      'Profile',
       'Sector',
       'State',
       'Status',
@@ -246,6 +250,8 @@ const EmailTracking: React.FC = () => {
         record.company_name,
         record.contact_person,
         record.recipient_email,
+        record.mobile_number || '',
+        record.profile || '',
         record.sector,
         record.state,
         record.success ? 'Success' : 'Failed',
@@ -578,6 +584,8 @@ const EmailTracking: React.FC = () => {
                       <th>Company</th>
                       <th>Contact</th>
                       <th>Email</th>
+                      <th>Mobile</th>
+                      <th>Profile</th>
                       <th>Sector</th>
                       <th>State</th>
                       <th>Status</th>
@@ -587,7 +595,7 @@ const EmailTracking: React.FC = () => {
                   <tbody>
                     {records.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="text-center">
+                        <td colSpan={10} className="text-center">
                           No records found for the selected filters
                         </td>
                       </tr>
@@ -598,6 +606,14 @@ const EmailTracking: React.FC = () => {
                           <td>{record.company_name}</td>
                           <td>{record.contact_person}</td>
                           <td>{record.recipient_email}</td>
+                          <td>{record.mobile_number || '-'}</td>
+                          <td>
+                            {record.profile ? (
+                              <div style={{ maxWidth: '200px', maxHeight: '100px', overflow: 'auto' }}>
+                                {record.profile}
+                              </div>
+                            ) : '-'}
+                          </td>
                           <td>{record.sector}</td>
                           <td>{record.state}</td>
                           <td>
