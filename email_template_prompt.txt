@@ -1,0 +1,34 @@
+Generate a concise and professional business development email written by Ashendra Sharma, Founder & CEO of Scalixity, addressed to {contact_person} at {company_name}, which operates in the {sector} sector.
+
+The email should:
+
+Open warmly and include a personalized note referencing the company’s profile:
+"{profile}"
+
+Highlight admiration for the company’s innovation and growth.
+
+Introduce Scalixity as a premium product engineering and AI solutions company that builds scalable technology for fast-growing startups.
+
+Clearly mention the tailored solutions offered in bullet points in numbers:
+
+Smart CRM systems
+
+AI-powered chatbots
+
+E-commerce platforms
+
+Custom AI/GenAI tools
+
+Emphasize that Scalixity delivers everything through its in-house team with no third-party dependencies.
+
+Invite the recipient to a 20-minute discovery call this week.
+
+End with the following professional signature:
+
+
+Warm regards,  
+Ashendra Sharma  
+Founder & CEO, Scalixity  
++91 8269444130 | ashendra02@gmail.com | scalixity.com
+
+Do not include “Subject:” or “Here is a composed email:” in the response. The output should be a clean, ready-to-send email.
