@@ -13,11 +13,13 @@ from langchain.schema import HumanMessage, SystemMessage
 import io
 from email.mime.base import MIMEBase
 from email import encoders
-from models import EmailRecord, get_db, create_tables, get_current_time_ist
+from models import EmailRecord, ScheduledEmail, get_db, create_tables, get_current_time_ist
 from sqlalchemy.orm import Session
 from datetime import datetime
 import json
 import pytz
+from flask_apscheduler import APScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 print("Starting Flask API server initialization...")
 
@@ -32,8 +34,8 @@ print(f"GROQ_API_KEY loaded: {'Yes' if groq_api_key else 'No'}")
 print(f"ZOHO_EMAIL loaded: {'Yes' if sender_email else 'No'}")
 print(f"ZOHO_APP_PASSWORD loaded: {'Yes' if sender_password else 'No'}")
 
-# Create database tables
-print("Creating database tables...")
+# Create database tables if they don't exist
+print("Creating database tables if they don't exist...")
 create_tables()
 print("Database tables created successfully")
 
@@ -291,8 +293,8 @@ def send_emails():
     
     try:
         # Process the uploaded CSV file or use the default one
-        if 'file' in request.files and request.files['file'].filename:
-            file = request.files['file']
+        if 'recipients_csv' in request.files and request.files['recipients_csv'].filename:
+            file = request.files['recipients_csv']
             print(f"Reading uploaded CSV file: {file.filename}")
             df = pd.read_csv(file)
             print("DEBUG: CSV columns found:", df.columns.tolist())
@@ -510,6 +512,178 @@ def create_email_record():
         return jsonify({'error': str(e)}), 500
     finally:
         db.close()
+
+# Configure APScheduler
+app.config['SCHEDULER_API_ENABLED'] = True
+app.config['SCHEDULER_JOBSTORES'] = {
+    'default': SQLAlchemyJobStore(url='sqlite:///scheduler.db')
+}
+
+scheduler = APScheduler()
+scheduler.init_app(app)
+scheduler.start()
+
+def process_scheduled_email(task_id):
+    """Process a scheduled email task"""
+    db = next(get_db())
+    try:
+        task = db.query(ScheduledEmail).filter_by(id=task_id).first()
+        if not task:
+            print(f"❌ Scheduled task {task_id} not found")
+            return
+        
+        # Parse CSV data from stored JSON
+        df = pd.read_json(task.recipient_csv_data)
+        
+        # Apply filters if provided
+        if task.sector:
+            df = df[df["Sector"].str.lower() == task.sector.lower()]
+        if task.state:
+            df = df[df["State"].str.lower() == task.state.lower()]
+            
+        # Handle attachment if present
+        attachment = None
+        if task.attachment_path:
+            try:
+                print(f"Opening attachment: {task.attachment_path}")
+                attachment = open(task.attachment_path, 'rb')
+                # Create a FileStorage-like object
+                class FileStorage:
+                    def __init__(self, file, filename):
+                        self.file = file
+                        self.filename = filename
+                    def read(self):
+                        return self.file.read()
+                    def seek(self, pos):
+                        return self.file.seek(pos)
+                
+                attachment = FileStorage(attachment, os.path.basename(task.attachment_path))
+                print(f"✅ Attachment loaded successfully")
+            except Exception as e:
+                print(f"❌ Error opening attachment: {e}")
+                traceback.print_exc()
+            
+        for _, row in df.iterrows():
+            to_email = row.get("Email")
+            contact_person = row.get("Contact Person", "there")
+            
+            # Generate email with custom prompt if provided
+            generated_msg = generate_email(row, task.ai_prompt)
+            final_message = append_calendly_link(generated_msg, contact_person)
+            
+            # Send email
+            success = send_email(
+                to_email, 
+                contact_person, 
+                final_message, 
+                sender_email, 
+                sender_password, 
+                attachment,
+                row
+            )
+            
+            time.sleep(1.5)  # Prevent SMTP rate-limiting
+        
+        # Update task status
+        task.status = 'completed'
+        db.commit()
+        
+    except Exception as e:
+        print(f"❌ Error processing scheduled task {task_id}: {e}")
+        traceback.print_exc()
+        task.status = 'failed'
+        db.commit()
+    finally:
+        # Close attachment if it was opened
+        if attachment and hasattr(attachment, 'file'):
+            attachment.file.close()
+        db.close()
+
+@app.route('/schedule-emails', methods=['POST'])
+def schedule_emails():
+    """Schedule emails for future sending"""
+    try:
+        # Get form data
+        csv_file = request.files.get('recipients_csv')
+        attachment = request.files.get('attachment')
+        ai_prompt = request.form.get('ai_prompt', '')
+        sector = request.form.get('sector', '')
+        state = request.form.get('state', '')
+        scheduled_time = request.form.get('scheduled_time')  # Expected in ISO format
+        
+        if not csv_file or not scheduled_time:
+            return jsonify({'error': 'Missing required fields'}), 400
+            
+        # Read and validate CSV
+        df = pd.read_csv(csv_file)
+        if 'Email' not in df.columns:
+            return jsonify({'error': 'CSV must contain an Email column'}), 400
+            
+        # Save attachment if provided
+        attachment_path = None
+        if attachment:
+            attachment_path = os.path.join('uploads', attachment.filename)
+            os.makedirs('uploads', exist_ok=True)
+            attachment.save(attachment_path)
+        
+        # Parse the scheduled time
+        try:
+            # Remove 'Z' and handle timezone
+            if scheduled_time.endswith('Z'):
+                scheduled_time = scheduled_time[:-1]  # Remove 'Z'
+                dt = datetime.fromisoformat(scheduled_time)
+                dt = dt.replace(tzinfo=pytz.UTC)  # Set as UTC
+            else:
+                dt = datetime.fromisoformat(scheduled_time)
+                if dt.tzinfo is None:
+                    dt = pytz.UTC.localize(dt)
+        except ValueError as e:
+            return jsonify({'error': f'Invalid date format: {str(e)}'}), 400
+        
+        # Create scheduled task record
+        db = next(get_db())
+        scheduled_task = ScheduledEmail(
+            scheduled_time=dt,
+            recipient_csv_data=df.to_json(),
+            ai_prompt=ai_prompt,
+            sector=sector,
+            state=state,
+            attachment_path=attachment_path,
+            status='pending'
+        )
+        db.add(scheduled_task)
+        db.commit()
+        
+        # Schedule the job
+        scheduler.add_job(
+            func=process_scheduled_email,
+            trigger='date',
+            run_date=dt,
+            args=[scheduled_task.id],
+            id=f'email_task_{scheduled_task.id}'
+        )
+        
+        return jsonify({
+            'message': 'Email task scheduled successfully',
+            'task_id': scheduled_task.id,
+            'scheduled_time': dt.isoformat()
+        })
+        
+    except Exception as e:
+        print(f"❌ Error scheduling emails: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/scheduled-tasks', methods=['GET'])
+def get_scheduled_tasks():
+    """Get list of scheduled email tasks"""
+    try:
+        db = next(get_db())
+        tasks = db.query(ScheduledEmail).all()
+        return jsonify([task.to_dict() for task in tasks])
+    except Exception as e:
+        print(f"❌ Error fetching scheduled tasks: {e}")
+        return jsonify({'error': str(e)}), 500
 
 print("Flask API setup complete, starting server...")
 if __name__ == "__main__":

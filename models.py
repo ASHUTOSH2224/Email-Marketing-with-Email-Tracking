@@ -48,6 +48,18 @@ def get_current_time_ist():
     # Return naive datetime in IST
     return ist_now.replace(tzinfo=None)
 
+def drop_tables():
+    """Drop all tables"""
+    Base.metadata.drop_all(bind=engine)
+
+def recreate_tables():
+    """Drop and recreate all tables"""
+    print("Dropping all tables...")
+    drop_tables()
+    print("Creating tables...")
+    create_tables()
+    print("Tables recreated successfully")
+
 class EmailRecord(Base):
     __tablename__ = "email_records"
 
@@ -63,6 +75,29 @@ class EmailRecord(Base):
     success = Column(Boolean, default=True)
     error_message = Column(Text, nullable=True)
     attachment_name = Column(String(255), nullable=True)
+
+class ScheduledEmail(Base):
+    __tablename__ = 'scheduled_emails'
+
+    id = Column(Integer, primary_key=True)
+    scheduled_time = Column(DateTime(timezone=True), nullable=False)
+    recipient_csv_data = Column(Text, nullable=False)  # Store CSV data as JSON string
+    ai_prompt = Column(Text)
+    sector = Column(String(255))
+    state = Column(String(255))
+    attachment_path = Column(String(255))
+    status = Column(String(50), default='pending')  # pending, completed, failed
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(pytz.UTC))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'scheduled_time': self.scheduled_time.isoformat(),
+            'sector': self.sector,
+            'state': self.state,
+            'status': self.status,
+            'created_at': self.created_at.isoformat()
+        }
 
 # Function to create database tables
 def create_tables():

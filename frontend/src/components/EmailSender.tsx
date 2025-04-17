@@ -10,9 +10,30 @@ import {
   Snackbar,
   CircularProgress,
   Link,
+  FormControlLabel,
+  Switch,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
+import { DateTimePicker } from '@mui/x-date-pickers';
 import EmailIcon from '@mui/icons-material/Email';
 import axios from 'axios';
+import { API_ENDPOINTS } from '../config';
+
+// Common timezone list
+const TIMEZONES = [
+  'UTC',
+  'Asia/Kolkata',
+  'Asia/Dubai',
+  'Asia/Singapore',
+  'Europe/London',
+  'America/New_York',
+  'America/Los_Angeles',
+  'Australia/Sydney',
+  'Pacific/Auckland'
+];
 
 const EmailSender: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -21,6 +42,11 @@ const EmailSender: React.FC = () => {
   const [sector, setSector] = useState('');
   const [state, setState] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduledTime, setScheduledTime] = useState<Date | null>(new Date());
+  const [timeZone, setTimeZone] = useState(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  );
   const [notification, setNotification] = useState<{
     open: boolean;
     message: string;
@@ -52,7 +78,7 @@ const EmailSender: React.FC = () => {
     try {
       const formData = new FormData();
       if (file) {
-        formData.append('file', file);
+        formData.append('recipients_csv', file);
       }
       if (attachment) {
         formData.append('attachment', attachment);
@@ -60,25 +86,24 @@ const EmailSender: React.FC = () => {
       formData.append('prompt', prompt);
       formData.append('sector', sector);
       formData.append('state', state);
+      
+      if (scheduleEnabled && scheduledTime) {
+        formData.append('scheduled_time', scheduledTime.toISOString());
+        formData.append('time_zone', timeZone);
+      }
 
-      console.log('Submitting form data:', {
-        file: file?.name,
-        prompt,
-        sector,
-        state
-      });
-
-      const response = await axios.post('http://localhost:8000/send-emails', formData, {
+      const endpoint = scheduleEnabled ? API_ENDPOINTS.SCHEDULE_EMAILS : API_ENDPOINTS.SEND_EMAILS;
+      const response = await axios.post(endpoint, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
 
-      console.log('Response:', response.data);
-
       setNotification({
         open: true,
-        message: `${response.data.message} successfully!`,
+        message: scheduleEnabled 
+          ? `Emails scheduled successfully for ${scheduledTime?.toLocaleString()}!`
+          : `${response.data.message || 'Emails sent'} successfully!`,
         severity: 'success',
       });
     } catch (error: any) {
@@ -176,6 +201,44 @@ const EmailSender: React.FC = () => {
           </Box>
 
           <Box>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={scheduleEnabled}
+                  onChange={(e) => setScheduleEnabled(e.target.checked)}
+                />
+              }
+              label="Schedule for later"
+            />
+            
+            {scheduleEnabled && (
+              <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
+                <DateTimePicker
+                  label="Schedule Time"
+                  value={scheduledTime}
+                  onChange={(newValue) => setScheduledTime(newValue)}
+                  sx={{ flex: 1 }}
+                />
+                
+                <FormControl sx={{ minWidth: 200 }}>
+                  <InputLabel>Timezone</InputLabel>
+                  <Select
+                    value={timeZone}
+                    label="Timezone"
+                    onChange={(e) => setTimeZone(e.target.value)}
+                  >
+                    {TIMEZONES.map((tz: string) => (
+                      <MenuItem key={tz} value={tz}>
+                        {tz}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+            )}
+          </Box>
+
+          <Box>
             <Typography variant="subtitle1" gutterBottom>
               AI Prompt Instructions
             </Typography>
@@ -214,10 +277,10 @@ const EmailSender: React.FC = () => {
             {isLoading ? (
               <>
                 <CircularProgress size={24} sx={{ mr: 1, color: 'white' }} />
-                Sending...
+                {scheduleEnabled ? 'Scheduling...' : 'Sending...'}
               </>
             ) : (
-              'Send Emails'
+              scheduleEnabled ? 'Schedule Emails' : 'Send Emails'
             )}
           </Button>
 

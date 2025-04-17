@@ -1,17 +1,19 @@
-Generate a concise and professional business development email written by Ashendra Sharma, Founder & CEO of Scalixity, addressed to {contact_person} at {company_name}, which operates in the {sector} sector.
+Generate a concise and professional follow-up business development email written by Ashendra Sharma, Founder & CEO of Scalixity, addressed to {contact_person} at {company_name}, which operates in the {sector} sector.
 
 The email should:
 
-Open warmly and include a personalized note referencing the company’s profile:
+Open with a warm and polite tone, referencing a previous email or outreach, and expressing continued interest in connecting.
+
+Include a personalized sentence that reflects admiration and relevance based on the company’s profile:
 "{profile}"
 
-Highlight admiration for the company’s innovation and growth.
+Briefly acknowledge the company’s innovation and growth in its sector.
 
-Introduce Scalixity as a premium product engineering and AI solutions company that builds scalable technology for fast-growing startups.
+Reintroduce Scalixity as a premium product engineering and AI solutions company focused on helping fast-growing startups like {company_name} scale with tailored technology.
 
-Clearly mention the tailored solutions offered in bullet points in numbers:
+Summarize Scalixity’s key offerings in a clean numbered list:
 
-Smart CRM systems to manage your customer interactions effectively
+Smart CRM systems to manage customer interactions effectively
 
 AI-powered chatbots to provide personalized support and enhance user experience
 
@@ -19,16 +21,17 @@ E-commerce platforms to facilitate seamless transactions
 
 Custom AI/GenAI tools to drive business intelligence and decision-making
 
-Emphasize that Scalixity delivers everything through its in-house team with no third-party dependencies.
+Mention that all services are delivered through Scalixity’s in-house team, with no third-party dependencies — ensuring faster deployment, seamless integration, and quality results.
 
-Invite the recipient to a 20-minute discovery call this week.
+Extend a warm and polite invitation for a 20-minute discovery call this week, and include the following booking link:
+https://calendly.com/scalixitydevops/meet
+Encourage them to choose a time that works best.
 
-End with the following professional signature:
+Use the following professional signature:
 
-
-Warm regards,  
-Ashendra Sharma  
-Founder & CEO, Scalixity  
+Warm regards,
+Ashendra Sharma
+Founder & CEO, Scalixity
 +91 8269444130 | ashendra02@gmail.com | scalixity.com
 
-Do not include “Subject:” or “Here is a composed email:” in the response. The output should be a clean, ready-to-send email.
+Do not include “Subject:” or “Here is a composed email:” in the response. The output should be a clean, ready-to-send follow-up email.

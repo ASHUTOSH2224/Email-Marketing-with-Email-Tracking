@@ -12,6 +12,11 @@ from langchain_groq import ChatGroq
 from langchain.schema import HumanMessage, SystemMessage
 import io
 import traceback
+from datetime import datetime
+import pytz
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.executors.pool import ThreadPoolExecutor
 
 print("Starting API server initialization...")
 
@@ -20,6 +25,22 @@ load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
 sender_email = os.getenv("ZOHO_EMAIL")
 sender_password = os.getenv("ZOHO_APP_PASSWORD")
+
+# Configure job stores for APScheduler
+jobstores = {
+    'default': SQLAlchemyJobStore(url='sqlite:///jobs.sqlite')
+}
+executors = {
+    'default': ThreadPoolExecutor(20)
+}
+job_defaults = {
+    'coalesce': False,
+    'max_instances': 3
+}
+
+# Initialize scheduler
+scheduler = BackgroundScheduler(jobstores=jobstores, executors=executors, job_defaults=job_defaults)
+scheduler.start()
 
 # Debug environment variables
 print(f"GROQ_API_KEY loaded: {'Yes' if groq_api_key else 'No'}")
@@ -51,36 +72,32 @@ except Exception as e:
 def generate_email(row, custom_prompt=""):
     try:
         print(f"Generating email for: {row.get('Contact Person', 'Unknown contact')}")
-        prompt = template.format(
+        # Format the template with the row data
+        email_content = template.format(
             company_name=row.get("Name of the Exhibitor", "your company"),
             contact_person=row.get("Contact Person", "there"),
             sector=row.get("Sector", "your industry"),
             profile=row.get("Profile", "your company profile")
         )
         
-        # Add custom prompt if provided
-        if custom_prompt:
-            prompt += f"\n\nAdditional instructions: {custom_prompt}"
+        # If there's a custom prompt, use AI to modify the email
+        if custom_prompt and custom_prompt.strip():
+            prompt = f"Here is an email:\n\n{email_content}\n\nModify this email according to these instructions: {custom_prompt}"
+            
+            messages = [
+                SystemMessage(content="You are an expert email writer for business communication. Modify the given email according to the instructions while keeping the same structure and placeholders."),
+                HumanMessage(content=prompt)
+            ]
 
-        messages = [
-            SystemMessage(content="You are an expert email writer for business communication."),
-            HumanMessage(content=prompt)
-        ]
-
-        # Initialize Groq Chat model
-        print("Initializing Groq Chat model...")
-        chat = ChatGroq(api_key=groq_api_key, model_name="llama3-70b-8192")
-        print("Calling Groq API...")
-        response = chat(messages)
-        email_text = response.content.strip()
-
-        # Clean generic intro line if present
-        lines = email_text.splitlines()
-        if lines and "business development email" in lines[0].lower():
-            email_text = "\n".join(lines[1:]).strip()
+            # Initialize Groq Chat model
+            print("Initializing Groq Chat model...")
+            chat = ChatGroq(api_key=groq_api_key, model_name="llama3-70b-8192")
+            print("Calling Groq API...")
+            response = chat(messages)
+            email_content = response.content.strip()
 
         print("Email generated successfully")
-        return email_text
+        return email_content
 
     except Exception as e:
         print(f"❌ Error generating email: {e}")
@@ -184,6 +201,100 @@ async def send_emails(
         print(f"Error: {error_msg}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=error_msg)
+
+@app.post("/schedule-emails")
+async def schedule_emails(
+    file: UploadFile = File(None),
+    prompt: str = Form(""),
+    sector: str = Form(""),
+    state: str = Form(""),
+    scheduled_time: str = Form(...),
+    time_zone: str = Form(...)
+):
+    print(f"Scheduling emails for {scheduled_time} {time_zone}")
+    
+    # Validate environment variables
+    if not all([groq_api_key, sender_email, sender_password]):
+        error_msg = "Missing environment variables. Please check your .env file."
+        print(f"Error: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+    
+    try:
+        # Convert scheduled time to UTC
+        local_tz = pytz.timezone(time_zone)
+        scheduled_dt = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+        local_dt = local_tz.localize(scheduled_dt)
+        utc_dt = local_dt.astimezone(pytz.UTC)
+        
+        # Process the uploaded CSV file or use the default one
+        if file:
+            contents = await file.read()
+            df = pd.read_csv(io.BytesIO(contents)).dropna(subset=["Email"])
+        else:
+            df = pd.read_csv("companies_data.csv").dropna(subset=["Email", "Profile", "Sector", "State"])
+        
+        # Apply filters if provided
+        if sector:
+            df = df[df["Sector"].str.lower() == sector.lower()]
+        if state:
+            df = df[df["State"].str.lower() == state.lower()]
+
+        if df.empty:
+            raise HTTPException(status_code=404, detail="No matching records found with the given filters.")
+        
+        # Store the data needed for sending emails
+        job_data = {
+            'df': df.to_dict('records'),
+            'prompt': prompt,
+            'sender_email': sender_email,
+            'sender_password': sender_password
+        }
+        
+        # Schedule the job
+        job_id = f"email_batch_{int(time.time())}"
+        scheduler.add_job(
+            process_scheduled_emails,
+            'date',
+            run_date=utc_dt,
+            args=[job_data],
+            id=job_id,
+            name=f"Email batch for {len(df)} recipients"
+        )
+        
+        return {
+            "message": f"Scheduled {len(df)} emails for {scheduled_time} {time_zone}",
+            "job_id": job_id
+        }
+        
+    except Exception as e:
+        error_msg = f"An error occurred while scheduling: {str(e)}"
+        print(f"Error: {error_msg}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=error_msg)
+
+def process_scheduled_emails(job_data):
+    """Process a batch of scheduled emails"""
+    try:
+        df = pd.DataFrame(job_data['df'])
+        prompt = job_data['prompt']
+        sender_email = job_data['sender_email']
+        sender_password = job_data['sender_password']
+        
+        for _, row in df.iterrows():
+            to_email = row.get("Email")
+            contact_person = row.get("Contact Person", "there")
+            
+            try:
+                generated_msg = generate_email(row, prompt)
+                send_email(to_email, contact_person, generated_msg, sender_email, sender_password)
+                time.sleep(1.5)  # Prevent SMTP rate-limiting
+            except Exception as e:
+                print(f"Failed to send scheduled email to {to_email}: {e}")
+                continue
+                
+    except Exception as e:
+        print(f"Error processing scheduled emails: {e}")
+        traceback.print_exc()
 
 print("API setup complete, starting server...")
 if __name__ == "__main__":
