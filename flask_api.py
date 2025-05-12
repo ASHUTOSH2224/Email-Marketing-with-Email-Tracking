@@ -20,6 +20,7 @@ import json
 import pytz
 from flask_apscheduler import APScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+import csv
 
 print("Starting Flask API server initialization...")
 
@@ -248,6 +249,42 @@ def send_email(to_email, contact_person, generated_message, sender_email, sender
         try:
             if db is None:
                 db = next(get_db())
+            
+            # Initialize mobile_value and profile_value here
+            mobile_value = None
+            profile_value = None
+            
+            # Try different possible column names for mobile
+            if isinstance(row, dict):
+                for mobile_col in ["Mobile", "Mobile Number", "mobile", "Contact No", "Phone"]:
+                    if mobile_col in row:
+                        mobile_value = row[mobile_col]
+                        break
+                        
+                # Try different possible column names for profile
+                for profile_col in ["Profile", "Company Profile", "profile", "Description", "About"]:
+                    if profile_col in row:
+                        profile_value = row[profile_col]
+                        break
+                
+                state_value = row.get("State", None)
+            elif row is not None:
+                # Handle pandas Series object
+                for mobile_col in ["Mobile", "Mobile Number", "mobile", "Contact No", "Phone"]:
+                    if mobile_col in row.index:
+                        mobile_value = row[mobile_col]
+                        break
+                        
+                # Try different possible column names for profile
+                for profile_col in ["Profile", "Company Profile", "profile", "Description", "About"]:
+                    if profile_col in row.index:
+                        profile_value = row[profile_col]
+                        break
+                
+                state_value = row.get("State", None) if "State" in row.index else None
+            else:
+                state_value = None
+            
             email_record = EmailRecord(
                 recipient_email=to_email,
                 company_name=company_name,
@@ -255,10 +292,10 @@ def send_email(to_email, contact_person, generated_message, sender_email, sender
                 mobile_number=mobile_value,
                 profile=profile_value,
                 sector=sector_name,
-                state=row.get("State", None),
+                state=state_value,
                 success=False,
                 error_message=error_message,
-                attachment_name=attachment_name
+                attachment_name=attachment_name if 'attachment_name' in locals() else None
             )
             db.add(email_record)
             db.commit()
@@ -296,7 +333,11 @@ def send_emails():
         if 'recipients_csv' in request.files and request.files['recipients_csv'].filename:
             file = request.files['recipients_csv']
             print(f"Reading uploaded CSV file: {file.filename}")
-            df = pd.read_csv(file)
+            df = pd.read_csv(file, 
+                           delimiter=',',
+                           quotechar='"',
+                           quoting=csv.QUOTE_MINIMAL,
+                           encoding='utf-8')
             print("DEBUG: CSV columns found:", df.columns.tolist())
             print("DEBUG: Column dtypes:", df.dtypes.to_dict())
             print("DEBUG: First row data:", df.iloc[0].to_dict())

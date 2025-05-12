@@ -66,11 +66,6 @@ interface DashboardStats {
   }[];
 }
 
-interface DateRange {
-  start: string;
-  end: string;
-}
-
 interface EmailRecordFilters {
   start_date: string;
   end_date: string;
@@ -96,61 +91,6 @@ const EmailTracking: React.FC = () => {
     emailsByState: {},
     dailyStats: [],
   });
-
-  const loadEmailRecords = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      let url = `${API_ENDPOINTS.EMAIL_RECORDS}`;
-      const params = new URLSearchParams();
-      
-      if (filters.start_date) params.append('start_date', filters.start_date);
-      if (filters.end_date) params.append('end_date', filters.end_date);
-      if (filters.sector) params.append('sector', filters.sector);
-      if (filters.state) params.append('state', filters.state);
-      
-      if (params.toString()) {
-        url += `?${params.toString()}`;
-      }
-      
-      console.log('Fetching email records from:', url);
-      console.log('Request headers:', {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      });
-      
-      const response = await axios.get(url, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      });
-      
-      console.log('Response status:', response.status);
-      console.log('Response headers:', response.headers);
-      console.log('Response data:', response.data);
-      
-      if (!Array.isArray(response.data)) {
-        throw new Error('Invalid response format: expected an array of records');
-      }
-      
-      setRecords(response.data);
-      calculateStats(response.data);
-    } catch (error) {
-      console.error('Error loading email records:', error);
-      if (axios.isAxiosError(error)) {
-        console.error('Axios error details:', {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          data: error.response?.data,
-          headers: error.response?.headers
-        });
-      }
-      setError(error instanceof Error ? error.message : 'An error occurred while loading email records');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [filters]);
 
   const calculateStats = useCallback((records: EmailRecord[]) => {
     try {
@@ -218,6 +158,61 @@ const EmailTracking: React.FC = () => {
       setError('Error calculating statistics from email records');
     }
   }, []);
+
+  const loadEmailRecords = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      let url = `${API_ENDPOINTS.EMAIL_RECORDS}`;
+      const params = new URLSearchParams();
+      
+      if (filters.start_date) params.append('start_date', filters.start_date);
+      if (filters.end_date) params.append('end_date', filters.end_date);
+      if (filters.sector) params.append('sector', filters.sector);
+      if (filters.state) params.append('state', filters.state);
+      
+      if (params.toString()) {
+        url += `?${params.toString()}`;
+      }
+      
+      console.log('Fetching email records from:', url);
+      console.log('Request headers:', {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      });
+      
+      const response = await axios.get(url, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+      
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+      console.log('Response data:', response.data);
+      
+      if (!Array.isArray(response.data)) {
+        throw new Error('Invalid response format: expected an array of records');
+      }
+      
+      setRecords(response.data);
+      calculateStats(response.data);
+    } catch (error) {
+      console.error('Error loading email records:', error);
+      if (axios.isAxiosError(error)) {
+        console.error('Axios error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          headers: error.response?.headers
+        });
+      }
+      setError(error instanceof Error ? error.message : 'An error occurred while loading email records');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [filters, calculateStats]);
 
   useEffect(() => {
     loadEmailRecords();
